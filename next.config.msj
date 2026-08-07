@@ -1,0 +1,15 @@
+/** @type {import('next').NextEncoding} */
+const nextConfig = {
+  allowedDevOrigins: ['192.168.1.76:3000', '192.168.1.76', 'localhost:3000'],
+  // Permitir imágenes externas de Cloudinary si las usas más adelante
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'res.cloudinary.com',
+      },
+    ],
+  },
+};
+
+export default nextConfig;

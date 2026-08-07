@@ -1,26 +1,55 @@
-@import "tailwindcss";
+@import 'tailwindcss';
+@import 'mapbox-gl/dist/mapbox-gl.css';
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --bg-navy: #0A1128;
+    --accent-crimson: #E63946;
+    --accent-gold: #F4D35E;
+  }
+
+  body {
+    background-color: var(--bg-navy);
+    color: #ffffff;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Clases de utilidad personalizadas para evidence.mobility */
+.bg-evidence-navy {
+  background-color: #0A1128;
+}
+
+.bg-evidence-crimson {
+  background-color: #E63946;
+}
+
+.text-evidence-crimson {
+  color: #E63946;
+}
+
+.border-evidence-crimson {
+  border-color: #E63946;
+}
+
+.text-evidence-gold {
+  color: #F4D35E;
+}
+
+/* Estilos limpios para barras de desplazamiento en modo oscuro */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0A1128;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
 }

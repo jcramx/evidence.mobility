@@ -188,7 +188,7 @@ export default function DriverQuickView() {
             <span className="text-xl font-bold text-white">evidence<span className="text-[#E63946]">.mobility</span></span>
           </div>
           <div className="flex justify-between items-center pt-2">
-            <h1 className="text-xl font-extrabold tracking-tight">Cotizador Competitivo</h1>
+            <h1 className="text-xl font-extrabold tracking-tight">Cotizador Exprés</h1>
             <span className={`text-[10px] px-2 py-0.5 rounded ${gpsActive ? 'bg-emerald-900/60 text-emerald-400 border border-emerald-700' : 'bg-amber-900/60 text-amber-400 border border-amber-700'}`}>
               {locationLabel}
             </span>
@@ -235,7 +235,7 @@ export default function DriverQuickView() {
             </div>
             <div ref={destRef} className="relative bg-gray-900 border border-gray-800 rounded-2xl p-3">
               <label className="text-[10px] font-bold text-blue-400 uppercase">Destino</label>
-              <input type="text" value={destination} onChange={(e) => { setDestination(e.target.value); fetchSuggestions(e.target.value, false); setShowDestList(true); }} className="w-full bg-transparent text-sm font-semibold focus:outline-none" placeholder="Ej. Ej. Terminal 2 del AICM..." />
+              <input type="text" value={destination} onChange={(e) => { setDestination(e.target.value); fetchSuggestions(e.target.value, false); setShowDestList(true); }} className="w-full bg-transparent text-sm font-semibold focus:outline-none" placeholder="Ej. Terminal 2 del AICM..." />
               {showDestList && destSuggestions.length > 0 && (
                 <ul className="absolute left-0 right-0 top-full mt-1 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 max-h-40 overflow-y-auto">
                   {destSuggestions.map((item) => <li key={item.id} onClick={() => handleSelectSuggestion(item.id, item.place_name, false)} className="p-2.5 text-xs hover:bg-gray-700 cursor-pointer">{item.place_name}</li>)}
@@ -245,7 +245,7 @@ export default function DriverQuickView() {
           </div>
 
           <button type="submit" disabled={isLoading} className="w-full bg-[#E63946] text-white font-bold py-4 rounded-2xl text-sm hover:opacity-90 transition">
-            {isLoading ? 'Calculando...' : '⚡ Calcular Oferta Competitiva'}
+            {isLoading ? 'Calculando...' : '⚡ Calcular Precio de Viaje'}
           </button>
         </form>
 

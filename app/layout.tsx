@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import Header from '../components/Header';
+import Footer from '../components/Footer';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -13,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "evidence.mobility | Cotiza y Reserva tu Trayecto",
+  title: "evidence.mobility | Reserva tu Viaje",
   description: "Plataforma de gestión de viajes y transporte",
 };
 
@@ -24,35 +26,17 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#F4F1EA] text-gray-900 flex flex-col min-h-screen`}>
-        
-        {/* Header Fijo */}
-        <header className="sticky top-0 z-50 bg-[#0b0f19] border-b border-gray-800 text-white px-6 py-4 flex justify-between items-center shadow-md">
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-lg tracking-tight text-white">evidence<span className="text-[#E63946]">.mobility</span></span>
-          </div>
-          <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-gray-300">
-            <span className="hover:text-white cursor-pointer">Ruta</span>
-            <span className="hover:text-white cursor-pointer">Disponibilidad</span>
-            <span className="hover:text-white cursor-pointer">Tarifas</span>
-          </nav>
-          <div>
-            <button className="bg-[#E63946] hover:bg-[#d62839] text-white text-xs font-semibold px-4 py-2 rounded-lg transition cursor-pointer">
-              Reservar Viaje
-            </button>
-          </div>
-        </header>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#0b0f19] text-white flex flex-col min-h-screen m-0 p-0 overflow-x-hidden`}>
+        {/* Header fijo en la parte superior */}
+        <Header />
 
-        {/* Contenido Principal */}
-        <main className="flex-grow container mx-auto px-4 py-6 max-w-7xl bg-[#F4F1EA]">
+        {/* Contenido principal flexible */}
+        <main className="flex-grow w-full bg-[#0b0f19]">
           {children}
         </main>
 
-        {/* Footer Fijo / Estático al final */}
-        <footer className="bg-[#0b0f19] border-t border-gray-800 text-gray-400 py-4 px-6 text-center text-xs">
-          <p>© {new Date().getFullYear()} evidence.mobility. Todos los derechos reservados.</p>
-        </footer>
-
+        {/* Footer fijo en la parte inferior */}
+        <Footer />
       </body>
     </html>
   );

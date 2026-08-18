@@ -22,7 +22,7 @@ export default function Header() {
               href="/reservations" 
               className="bg-[#E63946] hover:bg-[#d62839] text-white text-sm font-semibold px-4 py-2 rounded-lg transition shadow-sm"
             >
-              Cotiza y Reserva tu Viaje
+              Reserva
             </Link>
           </div>
         )}

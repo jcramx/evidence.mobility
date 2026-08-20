@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import RouteMap from '@/components/RouteMap';
 import TripDetailsBar, { VEHICLE_CATALOG, VehicleType, TripDetailsData } from '@/components/TripDetailsBar';
+import DownloadPDFButton from '@/components/DownloadPDFButton';
 
 interface Point {
   lng: number;
@@ -152,7 +153,6 @@ export default function Page() {
     // 1. Guía de Turistas
     if (tripDetails.hasTourGuide) {
       staffCost += STAFF_PRICING.tourGuide.dailyRate * daysCount;
-      // Si va desde el origen o es estancia continua con pernocta, requiere viáticos de hospedaje
       if ((tripDetails.tourGuideScope === 'from_origin' || !isIndependent) && nightsCount > 0) {
         staffViatics += STAFF_PRICING.tourGuide.perNightViatic * nightsCount;
       }
@@ -448,21 +448,31 @@ export default function Page() {
                 <span className="text-xl font-extrabold text-[#E63946]">{currentMetrics.formattedTotal}</span>
               </div>
 
-              <div className="flex justify-between items-center pt-4 border-t border-gray-100">
+              {/* BARRA DE ACCIONES Y BOTÓN PDF */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-gray-100">
                 <button
                   type="button"
                   onClick={() => setStep('selection')}
-                  className="text-xs font-semibold text-gray-600 hover:text-gray-900 px-4 py-2 rounded-lg border border-gray-200 cursor-pointer"
+                  className="text-xs font-semibold text-gray-600 hover:text-gray-900 px-4 py-2.5 rounded-xl border border-gray-200 cursor-pointer"
                 >
                   ← Modificar Configuración
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setStep('payment')}
-                  className="bg-[#E63946] text-white px-6 py-2.5 rounded-xl font-bold text-xs hover:bg-red-700 transition cursor-pointer"
-                >
-                  Proceder al Pago →
-                </button>
+
+                <div className="flex items-center gap-3">
+                  <DownloadPDFButton
+                    routeData={routeData}
+                    tripDetails={tripDetails}
+                    pricingData={currentMetrics}
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setStep('payment')}
+                    className="bg-[#E63946] text-white px-6 py-2.5 rounded-xl font-bold text-xs hover:bg-red-700 transition cursor-pointer"
+                  >
+                    Proceder al Pago →
+                  </button>
+                </div>
               </div>
 
             </div>

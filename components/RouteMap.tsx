@@ -21,6 +21,8 @@ interface RouteMetrics {
   durationMinutes: number;
   tolls?: TollItem[];
   totalTollsCost?: number;
+  routeGeometry?: any; // <-- Guardamos la geometría aquí para persisitirla al regresar
+  avoidTolls?: boolean; // <-- Preferencia de casetas
 }
 
 interface RouteData {
@@ -34,9 +36,10 @@ interface RouteMapProps {
   initialRoute: RouteData;
   onRouteSelected: (data: RouteData) => void;
   onContinue: () => void;
+  isRoundTrip?: boolean;
 }
 
-export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: RouteMapProps) {
+export default function RouteMap({ initialRoute, onRouteSelected, onContinue, isRoundTrip = false }: RouteMapProps) {
   const mapRef = useRef<MapRef | null>(null);
 
   const [viewState, setViewState] = useState({
@@ -48,6 +51,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
   const [pickup, setPickup] = useState<Point | null>(initialRoute?.pickup || null);
   const [dropoff, setDropoff] = useState<Point | null>(initialRoute?.dropoff || null);
   const [stops, setStops] = useState<Point[]>(initialRoute?.stops || []);
+  const [avoidTolls, setAvoidTolls] = useState<boolean>(initialRoute?.metrics?.avoidTolls || false);
 
   const [pickupInput, setPickupInput] = useState(initialRoute?.pickup?.address || '');
   const [dropoffInput, setDropoffInput] = useState(initialRoute?.dropoff?.address || '');
@@ -57,10 +61,11 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
   const [activeInput, setActiveInput] = useState<'pickup' | 'dropoff' | 'stop' | null>(null);
 
   const [metrics, setMetrics] = useState<RouteMetrics | null>(initialRoute?.metrics || null);
-  const [routeGeometry, setRouteGeometry] = useState<any>(null);
+  // Carga inmediata de la geometría persistida si existe
+  const [routeGeometry, setRouteGeometry] = useState<any>(initialRoute?.metrics?.routeGeometry || null);
   const [isCalculatingTolls, setIsCalculatingTolls] = useState<boolean>(false);
 
-  // Sincronización automática de ruta inicial
+  // Sincronización automática de ruta inicial y persistencia
   useEffect(() => {
     if (initialRoute) {
       setPickup(initialRoute.pickup || null);
@@ -69,9 +74,16 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
       setPickupInput(initialRoute.pickup?.address || '');
       setDropoffInput(initialRoute.dropoff?.address || '');
       setMetrics(initialRoute.metrics || null);
+
+      if (initialRoute.metrics?.routeGeometry) {
+        setRouteGeometry(initialRoute.metrics.routeGeometry);
+      }
       
-      if (initialRoute.pickup && initialRoute.dropoff && !initialRoute.metrics) {
-        fetchRouteMetrics(initialRoute.pickup, initialRoute.dropoff, initialRoute.stops || []);
+      if (initialRoute.pickup && initialRoute.dropoff) {
+        // Recalcular si no existe métrica o si cambió la opción de casetas
+        if (!initialRoute.metrics || initialRoute.metrics.avoidTolls !== avoidTolls) {
+          fetchRouteMetrics(initialRoute.pickup, initialRoute.dropoff, initialRoute.stops || [], avoidTolls);
+        }
       }
     }
   }, [initialRoute]);
@@ -97,34 +109,49 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
     );
   };
 
-  // Función para estimar peajes usando API backend / Tollguru mock
-  const fetchTolls = async (pickupPoint: Point, dropoffPoint: Point): Promise<TollItem[]> => {
+  // Consumir la API de peajes
+  const fetchTollsFromBackend = async (
+    start: Point,
+    end: Point,
+    waypointsPoints: Point[],
+    roundTrip: boolean
+  ): Promise<{ tolls: TollItem[]; totalTollsCost: number }> => {
     setIsCalculatingTolls(true);
     try {
-      // Sustituir este bloque por la petición real a tu API backend/Tollguru
-      // const res = await fetch('/api/calculate-tolls', { method: 'POST', body: JSON.stringify({ pickupPoint, dropoffPoint }) });
-      // const data = await res.json();
-      
-      // Simulación de cálculo automático según el trayecto
-      const isTolucaRoute = dropoffPoint.address.toLowerCase().includes('toluca') || pickupPoint.address.toLowerCase().includes('toluca');
-      
-      if (isTolucaRoute) {
-        return [
-          { id: '1', name: 'Caseta La Venta (Aut. México-Toluca)', cost: 105.00 },
-          { id: '2', name: 'Caseta La Marquesa / Lerma', cost: 95.00 }
-        ];
+      const res = await fetch('/api/tolls', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          origin: { lat: start.lat, lng: start.lng },
+          destination: { lat: end.lat, lng: end.lng },
+          waypoints: waypointsPoints.map(p => ({ lat: p.lat, lng: p.lng })),
+          isRoundTrip: roundTrip,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success && Array.isArray(data.tolls)) {
+        return {
+          tolls: data.tolls,
+          totalTollsCost: data.totalTollsCost ?? data.tolls.reduce((sum: number, item: TollItem) => sum + item.cost, 0),
+        };
       }
-      return [];
-    } catch (e) {
-      console.error('Error calculando peajes:', e);
-      return [];
+    } catch (error) {
+      console.error('Error al obtener peajes:', error);
     } finally {
       setIsCalculatingTolls(false);
     }
+
+    return { tolls: [], totalTollsCost: 0 };
   };
 
   // Obtener ruta, distancia, tiempo y peajes
-  const fetchRouteMetrics = async (currentPickup: Point, currentDropoff: Point, currentStops: Point[]) => {
+  const fetchRouteMetrics = async (
+    currentPickup: Point,
+    currentDropoff: Point,
+    currentStops: Point[],
+    shouldAvoidTolls: boolean
+  ) => {
     try {
       let coordinatesString = `${currentPickup.lng},${currentPickup.lat}`;
       
@@ -135,8 +162,10 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
       
       coordinatesString += `;${currentDropoff.lng},${currentDropoff.lat}`;
 
+      // Agregar parámetro exclude=toll si se seleccionó "Sin casetas"
+      const excludeParam = shouldAvoidTolls ? '&exclude=toll' : '';
       const response = await fetch(
-        `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?access_token=${process.env.NEXT_PUBLIC_MAPBOX_TOKEN}&geometries=geojson&overview=full`
+        `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?access_token=${process.env.NEXT_PUBLIC_MAPBOX_TOKEN}&geometries=geojson&overview=full${excludeParam}`
       );
       const data = await response.json();
 
@@ -145,26 +174,38 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
         const distanceKm = Number((route.distance / 1000).toFixed(2));
         const durationMinutes = Math.round(route.duration / 60);
 
-        // Guardar la geometría para dibujar la línea en el mapa
-        setRouteGeometry({
+        const geoFeature = {
           type: 'Feature',
           geometry: route.geometry
-        });
+        };
 
-        // Obtener peajes estimados
-        const tolls = await fetchTolls(currentPickup, currentDropoff);
-        const totalTollsCost = tolls.reduce((sum, item) => sum + item.cost, 0);
+        setRouteGeometry(geoFeature);
+
+        // Si se seleccionó "Sin casetas", omitimos la consulta a TollGuru
+        let tolls: TollItem[] = [];
+        let totalTollsCost = 0;
+
+        if (!shouldAvoidTolls) {
+          const tollData = await fetchTollsFromBackend(
+            currentPickup,
+            currentDropoff,
+            currentStops,
+            isRoundTrip
+          );
+          tolls = tollData.tolls;
+          totalTollsCost = tollData.totalTollsCost;
+        }
 
         const newMetrics: RouteMetrics = {
           distanceKm,
           durationMinutes,
           tolls,
-          totalTollsCost
+          totalTollsCost,
+          routeGeometry: geoFeature,
+          avoidTolls: shouldAvoidTolls,
         };
 
         setMetrics(newMetrics);
-
-        // Ajustar zoom para mostrar la ruta completa
         fitMapToBounds([currentPickup, ...currentStops, currentDropoff]);
 
         if (onRouteSelected) {
@@ -181,19 +222,31 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
     }
   };
 
-  const updateRouteState = (newPickup: Point | null, newDropoff: Point | null, newStops: Point[]) => {
+  const updateRouteState = (
+    newPickup: Point | null,
+    newDropoff: Point | null,
+    newStops: Point[],
+    newAvoidTolls: boolean = avoidTolls
+  ) => {
     setPickup(newPickup);
     setDropoff(newDropoff);
     setStops(newStops);
 
     if (newPickup && newDropoff) {
-      fetchRouteMetrics(newPickup, newDropoff, newStops);
+      fetchRouteMetrics(newPickup, newDropoff, newStops, newAvoidTolls);
     } else {
       setMetrics(null);
       setRouteGeometry(null);
       if (onRouteSelected) {
         onRouteSelected({ pickup: newPickup, dropoff: newDropoff, stops: newStops, metrics: null });
       }
+    }
+  };
+
+  const handleTollToggle = (avoid: boolean) => {
+    setAvoidTolls(avoid);
+    if (pickup && dropoff) {
+      updateRouteState(pickup, dropoff, stops, avoid);
     }
   };
 
@@ -333,6 +386,35 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
             )}
           </div>
 
+          {/* Selector Vía Con Casetas / Sin Casetas */}
+          <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
+            <label className="block text-xs font-semibold text-gray-700 mb-2">Preferencias de Ruta</label>
+            <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
+              <button
+                type="button"
+                onClick={() => handleTollToggle(false)}
+                className={`py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                  !avoidTolls 
+                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200' 
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                🛣️ Con casetas
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTollToggle(true)}
+                className={`py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                  avoidTolls 
+                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200' 
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                🚫 Sin casetas
+              </button>
+            </div>
+          </div>
+
           {/* Paradas Intermedias */}
           <div className="bg-white p-3.5 rounded-lg border border-gray-200 relative shadow-sm">
             <label className="block text-xs font-semibold text-gray-700 mb-1">Paradas Intermedias (Opcional)</label>
@@ -372,14 +454,16 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
             )}
           </div>
 
-          {/* Desglose Automático de Casetas / Peajes (Debajo de Paradas) */}
+          {/* Desglose de Casetas / Peajes */}
           <div className="bg-white p-3.5 rounded-lg border border-gray-200 shadow-sm space-y-2">
             <div className="flex justify-between items-center">
               <span className="text-xs font-semibold text-gray-700">Casetas / Peajes Estimados</span>
               {isCalculatingTolls && <span className="text-[10px] text-gray-400 animate-pulse">Calculando...</span>}
             </div>
 
-            {metrics?.tolls && metrics.tolls.length > 0 ? (
+            {avoidTolls ? (
+              <p className="text-[11px] text-gray-500 italic">Ruta configurada evitando autopistas de cuota.</p>
+            ) : metrics?.tolls && metrics.tolls.length > 0 ? (
               <div className="space-y-1.5 pt-1">
                 {metrics.tolls.map((toll) => (
                   <div key={toll.id} className="flex justify-between items-center text-xs bg-gray-50 px-2.5 py-1.5 rounded border border-gray-100">
@@ -399,7 +483,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
             )}
           </div>
 
-          {/* Panel de Métricas (Distancia y Tiempo) */}
+          {/* Métricas */}
           {metrics && (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex justify-between items-center text-xs">
               <div>
@@ -429,7 +513,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
         </div>
       </div>
 
-      {/* Mapa Visual con Mapbox */}
+      {/* Mapa Visual */}
       <div className="lg:col-span-8 h-full min-h-[420px]">
         <div className="w-full h-full rounded-xl overflow-hidden border border-gray-200 relative shadow-sm">
           <Map
@@ -441,7 +525,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
             onClick={handleMapClick}
             cursor="crosshair"
           >
-            {/* Trazado de la Ruta */}
+            {/* Trazado de la Ruta (Polyline) */}
             {routeGeometry && (
               <Source id="route-source" type="geojson" data={routeGeometry}>
                 <Layer

@@ -21,8 +21,8 @@ interface RouteMetrics {
   durationMinutes: number;
   tolls?: TollItem[];
   totalTollsCost?: number;
-  routeGeometry?: any; // <-- Guardamos la geometría aquí para persisitirla al regresar
-  avoidTolls?: boolean; // <-- Preferencia de casetas
+  routeGeometry?: any;
+  avoidTolls?: boolean;
 }
 
 interface RouteData {
@@ -61,11 +61,10 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
   const [activeInput, setActiveInput] = useState<'pickup' | 'dropoff' | 'stop' | null>(null);
 
   const [metrics, setMetrics] = useState<RouteMetrics | null>(initialRoute?.metrics || null);
-  // Carga inmediata de la geometría persistida si existe
   const [routeGeometry, setRouteGeometry] = useState<any>(initialRoute?.metrics?.routeGeometry || null);
   const [isCalculatingTolls, setIsCalculatingTolls] = useState<boolean>(false);
 
-  // Sincronización automática de ruta inicial y persistencia
+  // Sincronización automática de ruta inicial y persistencia de polyline
   useEffect(() => {
     if (initialRoute) {
       setPickup(initialRoute.pickup || null);
@@ -80,13 +79,19 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
       }
       
       if (initialRoute.pickup && initialRoute.dropoff) {
-        // Recalcular si no existe métrica o si cambió la opción de casetas
         if (!initialRoute.metrics || initialRoute.metrics.avoidTolls !== avoidTolls) {
           fetchRouteMetrics(initialRoute.pickup, initialRoute.dropoff, initialRoute.stops || [], avoidTolls);
         }
       }
     }
   }, [initialRoute]);
+
+  // Recalcular métricas si cambia el switch de Viaje Redondo desde las props principales
+  useEffect(() => {
+    if (pickup && dropoff) {
+      fetchRouteMetrics(pickup, dropoff, stops, avoidTolls);
+    }
+  }, [isRoundTrip]);
 
   // Ajustar cámara para encuadrar la ruta (fitBounds)
   const fitMapToBounds = (points: Point[]) => {
@@ -109,7 +114,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
     );
   };
 
-  // Consumir la API de peajes
+  // Consumir la API de peajes /api/tolls
   const fetchTollsFromBackend = async (
     start: Point,
     end: Point,
@@ -162,7 +167,6 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
       
       coordinatesString += `;${currentDropoff.lng},${currentDropoff.lat}`;
 
-      // Agregar parámetro exclude=toll si se seleccionó "Sin casetas"
       const excludeParam = shouldAvoidTolls ? '&exclude=toll' : '';
       const response = await fetch(
         `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?access_token=${process.env.NEXT_PUBLIC_MAPBOX_TOKEN}&geometries=geojson&overview=full${excludeParam}`
@@ -181,7 +185,6 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
 
         setRouteGeometry(geoFeature);
 
-        // Si se seleccionó "Sin casetas", omitimos la consulta a TollGuru
         let tolls: TollItem[] = [];
         let totalTollsCost = 0;
 
@@ -192,8 +195,14 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
             currentStops,
             isRoundTrip
           );
-          tolls = tollData.tolls;
-          totalTollsCost = tollData.totalTollsCost;
+
+          // Si la API no duplicó internamente por roundTrip, ajustamos los costos de casetas para viaje redondo
+          const multiplier = isRoundTrip ? 2 : 1;
+          tolls = tollData.tolls.map(t => ({
+            ...t,
+            cost: t.cost * multiplier
+          }));
+          totalTollsCost = tollData.totalTollsCost * multiplier;
         }
 
         const newMetrics: RouteMetrics = {
@@ -336,7 +345,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
       <div className="lg:col-span-4 space-y-4 flex flex-col justify-between">
         <div className="space-y-4">
           
-          {/* Origen */}
+          {/* 1. Punto de Origen */}
           <div className="relative">
             <label className="block text-xs font-semibold text-gray-700 mb-1">Punto de Origen</label>
             <input
@@ -361,61 +370,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
             )}
           </div>
 
-          {/* Destino */}
-          <div className="relative">
-            <label className="block text-xs font-semibold text-gray-700 mb-1">Destino Final</label>
-            <input
-              type="text"
-              placeholder="Dirección de llegada..."
-              value={dropoffInput}
-              onChange={(e) => searchAddress(e.target.value, 'dropoff')}
-              className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 text-sm placeholder-gray-400 focus:outline-none focus:border-[#E63946] shadow-sm"
-            />
-            {activeInput === 'dropoff' && suggestions.length > 0 && (
-              <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl w-full max-h-48 overflow-y-auto">
-                {suggestions.map((item, index) => (
-                  <div
-                    key={`${item.id}-${index}`}
-                    onClick={() => selectLocation(item)}
-                    className="p-2.5 text-xs text-gray-800 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-none"
-                  >
-                    {item.place_name}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Selector Vía Con Casetas / Sin Casetas */}
-          <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
-            <label className="block text-xs font-semibold text-gray-700 mb-2">Preferencias de Ruta</label>
-            <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
-              <button
-                type="button"
-                onClick={() => handleTollToggle(false)}
-                className={`py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                  !avoidTolls 
-                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200' 
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                🛣️ Con casetas
-              </button>
-              <button
-                type="button"
-                onClick={() => handleTollToggle(true)}
-                className={`py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                  avoidTolls 
-                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200' 
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                🚫 Sin casetas
-              </button>
-            </div>
-          </div>
-
-          {/* Paradas Intermedias */}
+          {/* 2. Paradas Intermedias (Ubicadas entre Origen y Destino) */}
           <div className="bg-white p-3.5 rounded-lg border border-gray-200 relative shadow-sm">
             <label className="block text-xs font-semibold text-gray-700 mb-1">Paradas Intermedias (Opcional)</label>
             <div className="flex gap-2">
@@ -454,10 +409,66 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
             )}
           </div>
 
-          {/* Desglose de Casetas / Peajes */}
+          {/* 3. Destino Final */}
+          <div className="relative">
+            <label className="block text-xs font-semibold text-gray-700 mb-1">Destino Final</label>
+            <input
+              type="text"
+              placeholder="Dirección de llegada..."
+              value={dropoffInput}
+              onChange={(e) => searchAddress(e.target.value, 'dropoff')}
+              className="w-full bg-white border border-gray-300 rounded-lg p-3 text-gray-900 text-sm placeholder-gray-400 focus:outline-none focus:border-[#E63946] shadow-sm"
+            />
+            {activeInput === 'dropoff' && suggestions.length > 0 && (
+              <div className="absolute z-50 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl w-full max-h-48 overflow-y-auto">
+                {suggestions.map((item, index) => (
+                  <div
+                    key={`${item.id}-${index}`}
+                    onClick={() => selectLocation(item)}
+                    className="p-2.5 text-xs text-gray-800 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-none"
+                  >
+                    {item.place_name}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 4. Selector Vía Con Casetas / Sin Casetas (Ubicado justo encima del cálculo de costo) */}
+          <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
+            <label className="block text-xs font-semibold text-gray-700 mb-2">Preferencias de Ruta</label>
+            <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
+              <button
+                type="button"
+                onClick={() => handleTollToggle(false)}
+                className={`py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                  !avoidTolls 
+                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200' 
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                🛣️ Con casetas
+              </button>
+              <button
+                type="button"
+                onClick={() => handleTollToggle(true)}
+                className={`py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                  avoidTolls 
+                    ? 'bg-white text-gray-900 shadow-sm border border-gray-200' 
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                🚫 Sin casetas
+              </button>
+            </div>
+          </div>
+
+          {/* 5. Desglose y Cálculo de Casetas / Peajes */}
           <div className="bg-white p-3.5 rounded-lg border border-gray-200 shadow-sm space-y-2">
             <div className="flex justify-between items-center">
-              <span className="text-xs font-semibold text-gray-700">Casetas / Peajes Estimados</span>
+              <span className="text-xs font-semibold text-gray-700">
+                Casetas / Peajes Estimados {isRoundTrip && <span className="text-[#E63946] font-normal">(Ida y vuelta)</span>}
+              </span>
               {isCalculatingTolls && <span className="text-[10px] text-gray-400 animate-pulse">Calculando...</span>}
             </div>
 
@@ -483,7 +494,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
             )}
           </div>
 
-          {/* Métricas */}
+          {/* Métricas (Distancia y Tiempo) */}
           {metrics && (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex justify-between items-center text-xs">
               <div>
@@ -513,7 +524,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
         </div>
       </div>
 
-      {/* Mapa Visual */}
+      {/* Mapa Visual con Mapbox */}
       <div className="lg:col-span-8 h-full min-h-[420px]">
         <div className="w-full h-full rounded-xl overflow-hidden border border-gray-200 relative shadow-sm">
           <Map
@@ -525,7 +536,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
             onClick={handleMapClick}
             cursor="crosshair"
           >
-            {/* Trazado de la Ruta (Polyline) */}
+            {/* Polyline de la Ruta Persistida */}
             {routeGeometry && (
               <Source id="route-source" type="geojson" data={routeGeometry}>
                 <Layer

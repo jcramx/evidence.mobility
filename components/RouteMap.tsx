@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import Map, { Marker } from 'react-map-gl/mapbox';
+import React, { useState, useEffect, useRef } from 'react';
+import Map, { Marker, Source, Layer, MapRef } from 'react-map-gl/mapbox';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 interface Point {
@@ -10,9 +10,17 @@ interface Point {
   address: string;
 }
 
+interface TollItem {
+  id: string;
+  name: string;
+  cost: number;
+}
+
 interface RouteMetrics {
   distanceKm: number;
   durationMinutes: number;
+  tolls?: TollItem[];
+  totalTollsCost?: number;
 }
 
 interface RouteData {
@@ -29,6 +37,8 @@ interface RouteMapProps {
 }
 
 export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: RouteMapProps) {
+  const mapRef = useRef<MapRef | null>(null);
+
   const [viewState, setViewState] = useState({
     latitude: 19.4326,
     longitude: -99.1332,
@@ -47,8 +57,10 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
   const [activeInput, setActiveInput] = useState<'pickup' | 'dropoff' | 'stop' | null>(null);
 
   const [metrics, setMetrics] = useState<RouteMetrics | null>(initialRoute?.metrics || null);
+  const [routeGeometry, setRouteGeometry] = useState<any>(null);
+  const [isCalculatingTolls, setIsCalculatingTolls] = useState<boolean>(false);
 
-  // Sincronización automática si initialRoute cambia desde el modal recurrente
+  // Sincronización automática de ruta inicial
   useEffect(() => {
     if (initialRoute) {
       setPickup(initialRoute.pickup || null);
@@ -64,24 +76,54 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
     }
   }, [initialRoute]);
 
-  // Geolocalización inicial segura
-  useEffect(() => {
-    if (navigator.geolocation && !pickup) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setViewState({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            zoom: 14
-          });
-        },
-        () => {},
-        { enableHighAccuracy: true, timeout: 5000 }
-      );
-    }
-  }, [pickup]);
+  // Ajustar cámara para encuadrar la ruta (fitBounds)
+  const fitMapToBounds = (points: Point[]) => {
+    if (!mapRef.current || points.length < 2) return;
 
-  // Función para calcular distancia y duración real usando Mapbox Directions API
+    const lngs = points.map(p => p.lng);
+    const lats = points.map(p => p.lat);
+
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+
+    mapRef.current.fitBounds(
+      [
+        [minLng, minLat],
+        [maxLng, maxLat]
+      ],
+      { padding: 60, duration: 1200 }
+    );
+  };
+
+  // Función para estimar peajes usando API backend / Tollguru mock
+  const fetchTolls = async (pickupPoint: Point, dropoffPoint: Point): Promise<TollItem[]> => {
+    setIsCalculatingTolls(true);
+    try {
+      // Sustituir este bloque por la petición real a tu API backend/Tollguru
+      // const res = await fetch('/api/calculate-tolls', { method: 'POST', body: JSON.stringify({ pickupPoint, dropoffPoint }) });
+      // const data = await res.json();
+      
+      // Simulación de cálculo automático según el trayecto
+      const isTolucaRoute = dropoffPoint.address.toLowerCase().includes('toluca') || pickupPoint.address.toLowerCase().includes('toluca');
+      
+      if (isTolucaRoute) {
+        return [
+          { id: '1', name: 'Caseta La Venta (Aut. México-Toluca)', cost: 105.00 },
+          { id: '2', name: 'Caseta La Marquesa / Lerma', cost: 95.00 }
+        ];
+      }
+      return [];
+    } catch (e) {
+      console.error('Error calculando peajes:', e);
+      return [];
+    } finally {
+      setIsCalculatingTolls(false);
+    }
+  };
+
+  // Obtener ruta, distancia, tiempo y peajes
   const fetchRouteMetrics = async (currentPickup: Point, currentDropoff: Point, currentStops: Point[]) => {
     try {
       let coordinatesString = `${currentPickup.lng},${currentPickup.lat}`;
@@ -94,7 +136,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
       coordinatesString += `;${currentDropoff.lng},${currentDropoff.lat}`;
 
       const response = await fetch(
-        `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?access_token=${process.env.NEXT_PUBLIC_MAPBOX_TOKEN}&geometries=geojson`
+        `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinatesString}?access_token=${process.env.NEXT_PUBLIC_MAPBOX_TOKEN}&geometries=geojson&overview=full`
       );
       const data = await response.json();
 
@@ -103,8 +145,27 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
         const distanceKm = Number((route.distance / 1000).toFixed(2));
         const durationMinutes = Math.round(route.duration / 60);
 
-        const newMetrics: RouteMetrics = { distanceKm, durationMinutes };
+        // Guardar la geometría para dibujar la línea en el mapa
+        setRouteGeometry({
+          type: 'Feature',
+          geometry: route.geometry
+        });
+
+        // Obtener peajes estimados
+        const tolls = await fetchTolls(currentPickup, currentDropoff);
+        const totalTollsCost = tolls.reduce((sum, item) => sum + item.cost, 0);
+
+        const newMetrics: RouteMetrics = {
+          distanceKm,
+          durationMinutes,
+          tolls,
+          totalTollsCost
+        };
+
         setMetrics(newMetrics);
+
+        // Ajustar zoom para mostrar la ruta completa
+        fitMapToBounds([currentPickup, ...currentStops, currentDropoff]);
 
         if (onRouteSelected) {
           onRouteSelected({ 
@@ -129,6 +190,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
       fetchRouteMetrics(newPickup, newDropoff, newStops);
     } else {
       setMetrics(null);
+      setRouteGeometry(null);
       if (onRouteSelected) {
         onRouteSelected({ pickup: newPickup, dropoff: newDropoff, stops: newStops, metrics: null });
       }
@@ -217,7 +279,8 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch w-full">
-      <div className="lg:col-span-3 space-y-4 flex flex-col justify-between">
+      {/* Panel de Controles Lateral */}
+      <div className="lg:col-span-4 space-y-4 flex flex-col justify-between">
         <div className="space-y-4">
           
           {/* Origen */}
@@ -309,7 +372,34 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
             )}
           </div>
 
-          {/* Panel de Métricas */}
+          {/* Desglose Automático de Casetas / Peajes (Debajo de Paradas) */}
+          <div className="bg-white p-3.5 rounded-lg border border-gray-200 shadow-sm space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-xs font-semibold text-gray-700">Casetas / Peajes Estimados</span>
+              {isCalculatingTolls && <span className="text-[10px] text-gray-400 animate-pulse">Calculando...</span>}
+            </div>
+
+            {metrics?.tolls && metrics.tolls.length > 0 ? (
+              <div className="space-y-1.5 pt-1">
+                {metrics.tolls.map((toll) => (
+                  <div key={toll.id} className="flex justify-between items-center text-xs bg-gray-50 px-2.5 py-1.5 rounded border border-gray-100">
+                    <span className="text-gray-700 truncate max-w-[180px]">{toll.name}</span>
+                    <span className="font-bold text-gray-900">${toll.cost.toFixed(2)} MXN</span>
+                  </div>
+                ))}
+                <div className="flex justify-between items-center pt-2 border-t border-gray-100 text-xs font-bold text-[#E63946]">
+                  <span>Total Peajes:</span>
+                  <span>${metrics.totalTollsCost?.toFixed(2)} MXN</span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[11px] text-gray-400 italic">
+                {pickup && dropoff ? 'No se detectaron casetas de cobro en esta ruta.' : 'Selecciona origen y destino para calcular casetas.'}
+              </p>
+            )}
+          </div>
+
+          {/* Panel de Métricas (Distancia y Tiempo) */}
           {metrics && (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex justify-between items-center text-xs">
               <div>
@@ -339,9 +429,11 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
         </div>
       </div>
 
-      <div className="lg:col-span-9 h-full min-h-[400px]">
+      {/* Mapa Visual con Mapbox */}
+      <div className="lg:col-span-8 h-full min-h-[420px]">
         <div className="w-full h-full rounded-xl overflow-hidden border border-gray-200 relative shadow-sm">
           <Map
+            ref={mapRef}
             {...viewState}
             onMove={(evt: any) => setViewState(evt.viewState)}
             mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}
@@ -349,6 +441,26 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue }: 
             onClick={handleMapClick}
             cursor="crosshair"
           >
+            {/* Trazado de la Ruta */}
+            {routeGeometry && (
+              <Source id="route-source" type="geojson" data={routeGeometry}>
+                <Layer
+                  id="route-layer"
+                  type="line"
+                  paint={{
+                    'line-color': '#E63946',
+                    'line-width': 5,
+                    'line-opacity': 0.85
+                  }}
+                  layout={{
+                    'line-join': 'round',
+                    'line-cap': 'round'
+                  }}
+                />
+              </Source>
+            )}
+
+            {/* Marcadores */}
             {pickup && (
               <Marker longitude={pickup.lng} latitude={pickup.lat} anchor="bottom">
                 <div className="bg-[#E63946] text-white text-[10px] px-2 py-0.5 rounded-full font-bold shadow-md">

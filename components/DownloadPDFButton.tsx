@@ -1,26 +1,49 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { PDFDownloadLink } from '@react-pdf/renderer';
-import QuotePDFDocument from '@/components/QuotePDFDocument';
+import QuotePDFDocument from './QuotePDFDocument';
+import { TripDetailsData } from './TripDetailsBar';
 
-export default function DownloadPDFButton({ routeData, tripDetails, pricingData }: any) {
-  const [isClient, setIsClient] = useState(false);
+interface Point {
+  address: string;
+}
 
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
+interface DownloadPDFButtonProps {
+  routeData: {
+    pickup: Point | null;
+    dropoff: Point | null;
+    stops: Point[];
+  };
+  tripDetails: TripDetailsData;
+  pricingData: {
+    baseCost: number;
+    distanceCost: number;
+    timeCost: number;
+    viaticsCost: number;
+    staffCost: number;
+    staffViatics: number;
+    extraServices: number;
+    kmToCharge: number;
+    minsToCharge: number;
+    numericTotal: number;
+    formattedTotal: string;
+  };
+  taxOptions?: {
+    includeTax?: boolean;
+    applyRetentions?: boolean;
+    isrRetentionRate?: number;
+    ivaRetentionRate?: number;
+  };
+}
 
-  if (!isClient) {
-    return (
-      <button 
-        disabled 
-        className="bg-gray-300 text-gray-600 px-5 py-2.5 rounded-xl font-bold text-xs opacity-70"
-      >
-        Cargando generador de PDF...
-      </button>
-    );
-  }
+export default function DownloadPDFButton({
+  routeData,
+  tripDetails,
+  pricingData,
+  taxOptions,
+}: DownloadPDFButtonProps) {
+  const fileName = `Cotizacion_${tripDetails.vehicleType}_${new Date().toISOString().slice(0, 10)}.pdf`;
 
   return (
     <PDFDownloadLink
@@ -29,12 +52,13 @@ export default function DownloadPDFButton({ routeData, tripDetails, pricingData 
           routeData={routeData}
           tripDetails={tripDetails}
           pricingData={pricingData}
+          taxOptions={taxOptions}
         />
       }
-      fileName={`Cotizacion_Traslado_${tripDetails.departureDate || 'Servicio'}.pdf`}
-      className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold text-xs hover:bg-slate-800 transition flex items-center gap-2 shadow-sm"
+      fileName={fileName}
+      className="inline-flex items-center justify-center bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all shadow-xs cursor-pointer"
     >
-      {({ loading }) => (loading ? '⏳ Generando PDF...' : '📄 Descargar Cotización PDF')}
+      {({ loading }) => (loading ? 'Generando PDF...' : '📄 Descargar Cotización PDF')}
     </PDFDownloadLink>
   );
 }

@@ -5,6 +5,12 @@ import RouteMap from '@/components/RouteMap';
 import TripDetailsBar, { VEHICLE_CATALOG, VehicleType, TripDetailsData } from '@/components/TripDetailsBar';
 import DownloadPDFButton from '@/components/DownloadPDFButton';
 
+export interface TollItem {
+  id: string;
+  name: string;
+  cost: number;
+}
+
 interface Point {
   lng: number;
   lat: number;
@@ -15,7 +21,11 @@ interface Point {
 interface RouteMetrics {
   distanceKm: number;
   durationMinutes: number;
+  tolls?: TollItem[];
+  totalTollsCost?: number;
 }
+
+type TaxRegime = 'public' | 'individual' | 'corporate';
 
 const VEHICLE_PRICING: Record<VehicleType, {
   baseCost: number;
@@ -34,16 +44,9 @@ const VEHICLE_PRICING: Record<VehicleType, {
   bus_luxury:    { baseCost: 650, costPerKm: 75, costPerMinute: 12.0, waitingHourCost: 850, perNightViatic: 4500 },
 };
 
-// Tarifas de Servicios de Personal (Tarifas base, hora extra y pernocta)
 const STAFF_PRICING = {
-  tourGuide: {
-    dailyRate: 1500,       // Tarifa base por día/servicio
-    perNightViatic: 1000,  // Viáticos por noche en estancia
-  },
-  assistant: {
-    dailyRate: 800,        // Tarifa base por día/servicio
-    perNightViatic: 700,   // Viáticos por noche en estancia
-  }
+  tourGuide: { dailyRate: 1500, perNightViatic: 1000 },
+  assistant: { dailyRate: 800,  perNightViatic: 700 },
 };
 
 export default function Page() {
@@ -82,7 +85,12 @@ export default function Page() {
     releaseUnitBetweenTrips: false,
   });
 
+  const [taxRegime, setTaxRegime] = useState<TaxRegime>('public');
   const [step, setStep] = useState<'selection' | 'summary' | 'payment'>('selection');
+
+  // El peaje total proviene directamente de las métricas del mapa
+  const totalTollCost = routeData.metrics?.totalTollsCost || 0;
+  const tollsList = routeData.metrics?.tolls || [];
 
   const getStayMetrics = () => {
     if (tripDetails.tripType !== 'round-trip' || !tripDetails.departureDate || !tripDetails.returnDate) {
@@ -133,6 +141,11 @@ export default function Page() {
     const distanceCost = kmToCharge * pricing.costPerKm;
     const timeCost = minsToCharge * pricing.costPerMinute;
 
+    const depHour = parseInt((tripDetails.departureTime || '09:00').split(':')[0], 10);
+    const isNightShift = depHour >= 23 || depHour < 6;
+    const nightSurchargeRate = 0.20;
+    const nightSurcharge = isNightShift ? (baseCost + distanceCost + timeCost) * nightSurchargeRate : 0;
+
     let viaticsCost = 0;
     if (tripDetails.tripType === 'round-trip' && !isIndependent) {
       if (stay.isMultiDay) {
@@ -143,14 +156,11 @@ export default function Page() {
       }
     }
 
-    // Cálculo de Servicios Especiales de Personal (Guía y Asistente)
     let staffCost = 0;
     let staffViatics = 0;
-
     const daysCount = stay.days || 1;
     const nightsCount = stay.nights || 0;
 
-    // 1. Guía de Turistas
     if (tripDetails.hasTourGuide) {
       staffCost += STAFF_PRICING.tourGuide.dailyRate * daysCount;
       if ((tripDetails.tourGuideScope === 'from_origin' || !isIndependent) && nightsCount > 0) {
@@ -158,7 +168,6 @@ export default function Page() {
       }
     }
 
-    // 2. Asistente
     if (tripDetails.hasAssistant) {
       staffCost += STAFF_PRICING.assistant.dailyRate * daysCount;
       if ((tripDetails.assistantScope === 'from_origin' || !isIndependent) && nightsCount > 0) {
@@ -167,11 +176,16 @@ export default function Page() {
     }
 
     const extraServices = (tripDetails.hasBabySeat ? 150 : 0);
-    const rawTotal = baseCost + distanceCost + timeCost + viaticsCost + staffCost + staffViatics + extraServices;
+    
+    const rawTotal = baseCost + distanceCost + timeCost + nightSurcharge + totalTollCost + viaticsCost + staffCost + staffViatics + extraServices;
     const numericTotal = rawKm === 0 ? 0 : Math.round(rawTotal / 10) * 10;
 
     return {
       isForeign,
+      isNightShift,
+      nightSurcharge,
+      tollCost: totalTollCost,
+      tollsList,
       baseCost,
       distanceCost,
       timeCost,
@@ -195,6 +209,22 @@ export default function Page() {
   const isSelectedIndependent = isRoundTrip && tripDetails.releaseUnitBetweenTrips;
   const currentMetrics = isSelectedIndependent ? scenarioIndependentRes : scenarioContinuousRes;
   const stay = getStayMetrics();
+
+  const subtotal = currentMetrics.numericTotal;
+  const ivaRate = 0.16;
+  const isrRetentionRate = 0.10;
+  const ivaRetentionRate = 2 / 3 * 0.16;
+
+  const isTaxApplicable = taxRegime !== 'public';
+  const isRetentionsApplicable = taxRegime === 'corporate';
+
+  const ivaAmount = isTaxApplicable ? subtotal * ivaRate : 0;
+  const isrRetentionAmount = isRetentionsApplicable ? subtotal * isrRetentionRate : 0;
+  const ivaRetentionAmount = isRetentionsApplicable ? subtotal * ivaRetentionRate : 0;
+  const grandTotalAmount = subtotal + ivaAmount - isrRetentionAmount - ivaRetentionAmount;
+
+  const formatCurrency = (val: number) =>
+    `$${val.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} MXN`;
 
   const getReturnStops = () => {
     const activeStops = routeData.stops.filter(s => s.applyOnReturn !== false);
@@ -246,7 +276,6 @@ export default function Page() {
 
             <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-6">
               
-              {/* SELECTOR INTERACTIVO EN TONOS CLAROS */}
               {isRoundTrip && (
                 <div className="bg-slate-50 border border-slate-200 text-slate-800 rounded-xl p-5 shadow-xs">
                   <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-3">
@@ -254,7 +283,6 @@ export default function Page() {
                   </p>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-                    {/* Opción Espera Continua / Pernocta */}
                     <button
                       type="button"
                       onClick={() => setTripDetails(prev => ({ ...prev, releaseUnitBetweenTrips: false }))}
@@ -280,7 +308,6 @@ export default function Page() {
                       </span>
                     </button>
 
-                    {/* Opción Servicios Independientes */}
                     <button
                       type="button"
                       onClick={() => setTripDetails(prev => ({ ...prev, releaseUnitBetweenTrips: true }))}
@@ -306,10 +333,6 @@ export default function Page() {
                       </span>
                     </button>
                   </div>
-
-                  <p className="text-[10px] text-slate-500 italic">
-                    * El sistema destaca la opción con mayor eficiencia económica, pero puedes seleccionar la modalidad que mejor se adapte a tu agenda.
-                  </p>
                 </div>
               )}
 
@@ -385,10 +408,10 @@ export default function Page() {
                 </div>
               </div>
 
-              {/* TABLA DE DESGLOSE TARIFARIO */}
+              {/* TABLA DE DESGLOSE TARIFARIO CON PEAJE Y RECARGO NOCTURNO */}
               <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 space-y-2 text-xs">
                 <h4 className="font-bold text-gray-800 border-b border-gray-200 pb-1.5 uppercase text-[11px] tracking-wider">
-                  Desglose Tarifario ({isSelectedIndependent ? 'Servicios Independientes: 2 Viajes Sencillos' : 'Espera Continua / Con Pernocta'})
+                  Desglose Operativo ({isSelectedIndependent ? 'Servicios Independientes' : 'Espera Continua / Pernocta'})
                 </h4>
                 
                 <div className="flex justify-between text-gray-600">
@@ -405,6 +428,28 @@ export default function Page() {
                   <span>Tiempo Estimado en Ruta ({currentMetrics.minsToCharge} min)</span>
                   <span className="font-medium">${currentMetrics.timeCost.toFixed(2)} MXN</span>
                 </div>
+
+                {currentMetrics.isNightShift && (
+                  <div className="flex justify-between text-blue-900 font-semibold bg-blue-50 p-2 rounded border border-blue-200">
+                    <span>🌙 Recargo por Horario Nocturno (23:00 - 06:00 hrs) [20%]</span>
+                    <span>+${currentMetrics.nightSurcharge.toFixed(2)} MXN</span>
+                  </div>
+                )}
+
+                {totalTollCost > 0 && (
+                  <div className="bg-white p-3 rounded-lg border border-gray-200 space-y-1.5">
+                    <div className="flex justify-between font-bold text-gray-800 border-b border-gray-100 pb-1">
+                      <span>🛣️ Casetas y Peajes Estimados ({tollsList.length})</span>
+                      <span className="text-[#E63946]">+${totalTollCost.toFixed(2)} MXN</span>
+                    </div>
+                    {tollsList.map((toll, idx) => (
+                      <div key={toll.id || idx} className="flex justify-between text-[11px] text-gray-600 pl-2">
+                        <span>• {toll.name}</span>
+                        <span className="font-medium">${toll.cost.toFixed(2)} MXN</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {currentMetrics.viaticsCost > 0 && (
                   <div className="flex justify-between text-amber-900 font-semibold bg-amber-50 p-2 rounded border border-amber-200">
@@ -437,18 +482,110 @@ export default function Page() {
                     <span className="font-medium">${currentMetrics.extraServices.toFixed(2)} MXN</span>
                   </div>
                 )}
+
+                <div className="flex justify-between text-gray-900 font-bold border-t border-gray-200 pt-2 text-xs">
+                  <span>SUBTOTAL</span>
+                  <span>{formatCurrency(subtotal)}</span>
+                </div>
+              </div>
+
+              {/* SECCIÓN FISCAL */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-xs font-bold text-gray-900 uppercase tracking-wide">
+                      Esquema Fiscal y Facturación
+                    </h4>
+                    <p className="text-[11px] text-gray-500">
+                      Selecciona la figura fiscal para calcular retenciones e impuestos aplicables.
+                    </p>
+                  </div>
+
+                  <div className="inline-flex bg-slate-200/80 p-1 rounded-lg self-start sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setTaxRegime('public')}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                        taxRegime === 'public'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Público en General
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTaxRegime('individual')}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                        taxRegime === 'individual'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Persona Física
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTaxRegime('corporate')}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                        taxRegime === 'corporate'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Persona Moral
+                    </button>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-200 pt-3 space-y-1.5 text-xs">
+                  {taxRegime === 'public' && (
+                    <div className="text-[11px] text-slate-500 italic flex items-center justify-between py-1">
+                      <span>Modalidad sin requerimiento de factura CFDI (Impuestos incluidos en tarifa base)</span>
+                      <span className="font-semibold text-slate-700">Sin desglose adicional</span>
+                    </div>
+                  )}
+
+                  {isTaxApplicable && (
+                    <div className="flex justify-between text-slate-700">
+                      <span>(+) I.V.A. (16.00%)</span>
+                      <span className="font-medium">+{formatCurrency(ivaAmount)}</span>
+                    </div>
+                  )}
+
+                  {isRetentionsApplicable && (
+                    <>
+                      <div className="flex justify-between text-amber-800">
+                        <span>(-) Retención I.S.R. (10.00%)</span>
+                        <span className="font-medium">-{formatCurrency(isrRetentionAmount)}</span>
+                      </div>
+                      <div className="flex justify-between text-amber-800">
+                        <span>(-) Retención I.V.A. (10.66%)</span>
+                        <span className="font-medium">-{formatCurrency(ivaRetentionAmount)}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* TOTAL GENERAL */}
               <div className="flex justify-between items-center bg-[#E63946]/10 p-4 rounded-xl border border-[#E63946]/20">
                 <div>
-                  <p className="text-xs font-bold text-gray-900">Total Servicio Garantizado</p>
-                  <p className="text-[10px] text-gray-500">Incluye chofer, casetas, combustible, seguro de viajero y personal contratado</p>
+                  <p className="text-xs font-bold text-gray-900">
+                    {taxRegime === 'public' ? 'Total Servicio Garantizado' : 'Total Neto a Pagar'}
+                  </p>
+                  <p className="text-[10px] text-gray-500">
+                    {taxRegime === 'corporate' 
+                      ? 'Total considerando retenciones fiscales correspondientes a Persona Moral'
+                      : 'Incluye combustible, casetas, conductor y servicios contratados'}
+                  </p>
                 </div>
-                <span className="text-xl font-extrabold text-[#E63946]">{currentMetrics.formattedTotal}</span>
+                <span className="text-xl font-extrabold text-[#E63946]">
+                  {formatCurrency(grandTotalAmount)}
+                </span>
               </div>
 
-              {/* BARRA DE ACCIONES Y BOTÓN PDF */}
+              {/* ACCIONES Y BOTÓN PDF */}
               <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-gray-100">
                 <button
                   type="button"
@@ -463,6 +600,12 @@ export default function Page() {
                     routeData={routeData}
                     tripDetails={tripDetails}
                     pricingData={currentMetrics}
+                    taxOptions={{
+                      includeTax: isTaxApplicable,
+                      applyRetentions: isRetentionsApplicable,
+                      isrRetentionRate: isrRetentionRate,
+                      ivaRetentionRate: ivaRetentionRate,
+                    }}
                   />
 
                   <button

@@ -64,34 +64,24 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
   const [routeGeometry, setRouteGeometry] = useState<any>(initialRoute?.metrics?.routeGeometry || null);
   const [isCalculatingTolls, setIsCalculatingTolls] = useState<boolean>(false);
 
-  // Sincronización automática de ruta inicial y persistencia de polyline
+  // Carga inicial y recálculo forzado cuando cambian puntos o `isRoundTrip`
   useEffect(() => {
     if (initialRoute) {
-      setPickup(initialRoute.pickup || null);
-      setDropoff(initialRoute.dropoff || null);
-      setStops(initialRoute.stops || []);
-      setPickupInput(initialRoute.pickup?.address || '');
-      setDropoffInput(initialRoute.dropoff?.address || '');
-      setMetrics(initialRoute.metrics || null);
+      const p = initialRoute.pickup || null;
+      const d = initialRoute.dropoff || null;
+      const s = initialRoute.stops || [];
 
-      if (initialRoute.metrics?.routeGeometry) {
-        setRouteGeometry(initialRoute.metrics.routeGeometry);
-      }
-      
-      if (initialRoute.pickup && initialRoute.dropoff) {
-        if (!initialRoute.metrics || initialRoute.metrics.avoidTolls !== avoidTolls) {
-          fetchRouteMetrics(initialRoute.pickup, initialRoute.dropoff, initialRoute.stops || [], avoidTolls);
-        }
+      setPickup(p);
+      setDropoff(d);
+      setStops(s);
+      setPickupInput(p?.address || '');
+      setDropoffInput(d?.address || '');
+
+      if (p && d) {
+        fetchRouteMetrics(p, d, s, avoidTolls);
       }
     }
-  }, [initialRoute]);
-
-  // Recalcular métricas si cambia el switch de Viaje Redondo desde las props principales
-  useEffect(() => {
-    if (pickup && dropoff) {
-      fetchRouteMetrics(pickup, dropoff, stops, avoidTolls);
-    }
-  }, [isRoundTrip]);
+  }, [initialRoute?.pickup, initialRoute?.dropoff, isRoundTrip]);
 
   // Ajustar cámara para encuadrar la ruta (fitBounds)
   const fitMapToBounds = (points: Point[]) => {
@@ -196,13 +186,8 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
             isRoundTrip
           );
 
-          // Si la API no duplicó internamente por roundTrip, ajustamos los costos de casetas para viaje redondo
-          const multiplier = isRoundTrip ? 2 : 1;
-          tolls = tollData.tolls.map(t => ({
-            ...t,
-            cost: t.cost * multiplier
-          }));
-          totalTollsCost = tollData.totalTollsCost * multiplier;
+          tolls = tollData.tolls;
+          totalTollsCost = tollData.totalTollsCost;
         }
 
         const newMetrics: RouteMetrics = {
@@ -370,7 +355,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
             )}
           </div>
 
-          {/* 2. Paradas Intermedias (Ubicadas entre Origen y Destino) */}
+          {/* 2. Paradas Intermedias (Entre Origen y Destino) */}
           <div className="bg-white p-3.5 rounded-lg border border-gray-200 relative shadow-sm">
             <label className="block text-xs font-semibold text-gray-700 mb-1">Paradas Intermedias (Opcional)</label>
             <div className="flex gap-2">
@@ -434,7 +419,7 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
             )}
           </div>
 
-          {/* 4. Selector Vía Con Casetas / Sin Casetas (Ubicado justo encima del cálculo de costo) */}
+          {/* 4. Selector Vía Con Casetas / Sin Casetas (Justo sobre la caja de casetas) */}
           <div className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
             <label className="block text-xs font-semibold text-gray-700 mb-2">Preferencias de Ruta</label>
             <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
@@ -489,7 +474,9 @@ export default function RouteMap({ initialRoute, onRouteSelected, onContinue, is
               </div>
             ) : (
               <p className="text-[11px] text-gray-400 italic">
-                {pickup && dropoff ? 'No se detectaron casetas de cobro en esta ruta.' : 'Selecciona origen y destino para calcular casetas.'}
+                {pickup && dropoff 
+                  ? (isCalculatingTolls ? 'Obteniendo desglose de cuotas...' : 'No se detectaron casetas de cobro en esta ruta.') 
+                  : 'Selecciona origen y destino para calcular casetas.'}
               </p>
             )}
           </div>
